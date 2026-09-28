@@ -8,7 +8,7 @@ En *skill* er en mappe med en `SKILL.md`, som lærer en AI-agent at løse en bes
 
 | Skill | Hvad den gør | Brug den når | Krav |
 |-------|--------------|--------------|------|
-| [`medieomtale-analyse`](skills/medieomtale-analyse/SKILL.md) | Laver en visuel medieanalyse som selvstændig HTML-fil og PowerPoint ud fra en JSON-eksport fra Overskrift.dk | Du har en JSON-fil med medieomtaler og vil have en rapport | Python 3, Node.js og `pptxgenjs` (`npm install` i skill-mappen) |
+| [`medieomtale-analyse`](skills/medieomtale-analyse/SKILL.md) | Laver en visuel medieanalyse som selvstændig HTML-fil og PowerPoint ud fra en JSON-eksport fra Overskrift.dk | Du har forbundet din AI til Overskrift via MCP, eller har hentet en JSON-fil med medieomtaler og vil have en rapport | Python 3, Node.js og `pptxgenjs` (`npm install` i skill-mappen) |
 | [`overskrift-soegeprofil-audit`](skills/overskrift-soegeprofil-audit/SKILL.md) | Gennemgår en søgeprofil i Overskrift.dk: er søgestrengen korrekt, rammer den rigtigt, og mangler den noget. Resultatet er en rapport i chatten | Du vil vide, om en søgning larmer, går glip af omtaler eller kan forbedres | Python 3 |
 
 Detaljer om arbejdsgang og format står i hver skills `SKILL.md`.
@@ -38,6 +38,7 @@ cd medieomtale-analyse && npm install
 
 ## Eksempler
 
+- *"Giv mig en analyse af medieomtalerne der nævner folkeskolen for den seneste uge"* (forbinder via MCP) → `medieomtale-analyse`
 - *"Analysér denne fil fra Overskrift og lav en rapport"* (vedhæft JSON-eksporten) → `medieomtale-analyse`
 - *"Lav et eftersyn af søgeprofilen ‘Musik i Lejet’"* → `overskrift-soegeprofil-audit`
 
