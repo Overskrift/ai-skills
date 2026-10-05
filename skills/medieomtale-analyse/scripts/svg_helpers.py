@@ -1,8 +1,14 @@
 """
-svg_helpers.py — Genbrugelige SVG-chart-funktioner til medieomtale-analyse.
-Indlæs med: exec(open('scripts/svg_helpers.py').read())
+svg_helpers.py: Genbrugelige SVG-chart-funktioner til medieomtale-analyse.
+Importeres af render_html.py og resolve_topics.py (from svg_helpers import ...).
 """
 import math
+from html import escape as _esc
+
+
+def _x(s):
+    """Escape tekst til SVG/HTML-indhold."""
+    return _esc(str(s), quote=False)
 
 PALETTE = ['#FF7500','#0055FF','#16a34a','#7c3aed','#0d9488','#db2777','#ca8a04','#4338ca','#65a30d','#0891b2']
 
@@ -15,19 +21,23 @@ def fmt_num(n):
 
 
 def fmt_xlabel(lbl, n_total):
-    """Forkorter x-akse labels så de ikke fylder for meget.
-    n_total = antal datapunkter — jo flere, jo kortere labels.
-    Forventer labels som '21/05 10h', '21/05', '10h', 'Jan', osv.
-    """
-    if n_total <= 14:
-        return lbl
-    if n_total <= 48:
-        parts = lbl.split()
-        if len(parts) == 2:
-            return parts[1]  # "21/05 10h" → "10h"
-        return lbl
-    parts = lbl.split()
-    return parts[0] if parts else lbl
+    """X-akse label. Labels fra compute_metrics.py er allerede korte
+    ('28/09', '28/09 14h', 'Okt'), og vbar_svg viser højst ca. 14 af dem,
+    så de vises uforkortede. Timelabels bevarer datoen, så flere døgn ikke
+    kan forveksles."""
+    return lbl
+
+
+def _label_step(labels):
+    """Hvor mange søjler der springes over mellem x-labels (højst ca. 14 labels).
+    For time-data vælges et trin der går op i et døgn (1, 2, 3, 4, 6, 12, 24)."""
+    n = len(labels)
+    target = max(1, -(-n // 14))
+    if labels and str(labels[0]).endswith('h'):
+        for s in (1, 2, 3, 4, 6, 12, 24):
+            if s >= target:
+                return s
+    return target
 
 
 def hbar_svg(labels, values, colors=None):
@@ -45,24 +55,38 @@ def hbar_svg(labels, values, colors=None):
     bw = 340  # søjle-areal
     svg = f'<svg viewBox="0 0 {lw+bw+60} {total_h}" overflow="visible" xmlns="http://www.w3.org/2000/svg" style="width:100%;font-family:sans-serif">\n'
     for i, (lbl, val) in enumerate(zip(labels, values)):
-        lbl = lbl[:40]
+        lbl = lbl if len(lbl) <= 40 else lbl[:39] + '…'
         y = i * (bar_h + 6) + 10
         blen = int(bw * val / max_v)
         col = (colors or PALETTE)[i % len(colors or PALETTE)]
+        words = lbl.split()
+        if len(lbl) > 24 and len(words) == 1:
+            lbl, words = lbl[:23] + '…', [lbl[:23] + '…']
         if len(lbl) > 24:
-            words = lbl.split()
             mid = max(1, len(words) // 2)
-            line1 = ' '.join(words[:mid]).replace('&', '&amp;').replace('<', '&lt;')
-            line2 = ' '.join(words[mid:]).replace('&', '&amp;').replace('<', '&lt;')
+            line1 = _x(' '.join(words[:mid]))
+            line2 = _x(' '.join(words[mid:]))
             svg += f'  <text x="{lw-8}" y="{y+bar_h//2-3}" text-anchor="end" font-size="11" fill="#475569">{line1}</text>\n'
             svg += f'  <text x="{lw-8}" y="{y+bar_h//2+10}" text-anchor="end" font-size="11" fill="#475569">{line2}</text>\n'
         else:
-            lbl_esc = lbl.replace('&', '&amp;').replace('<', '&lt;')
+            lbl_esc = _x(lbl)
             svg += f'  <text x="{lw-8}" y="{y+bar_h//2+5}" text-anchor="end" font-size="12" fill="#475569">{lbl_esc}</text>\n'
         svg += f'  <rect x="{lw}" y="{y}" width="{blen}" height="{bar_h}" fill="{col}" rx="3"/>\n'
         svg += f'  <text x="{lw+blen+6}" y="{y+bar_h//2+5}" font-size="12" fill="#1e293b">{val}</text>\n'
     svg += '</svg>'
     return svg
+
+
+def _nice_axis_max(v, ticks=4):
+    """Rund aksens maksimum op, så alle 5 gitterlinjer får pæne heltal
+    (fx 0, 1, 2, 3, 4 i stedet for 0, 0, 0, 0, 1 ved små tal)."""
+    raw = v / ticks
+    mag = 10 ** math.floor(math.log10(raw)) if raw > 0 else 1
+    for m in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+        step = m * mag
+        if step >= raw and step >= 1 and float(step).is_integer():
+            return step * ticks
+    return math.ceil(raw) * ticks
 
 
 def vbar_svg(labels, values, ma=None, top_idx=None, w=700, h=240):
@@ -77,7 +101,7 @@ def vbar_svg(labels, values, ma=None, top_idx=None, w=700, h=240):
     if not values:
         return '<p>Ingen data</p>'
     ma_clean = [v for v in (ma or []) if v is not None]
-    max_v = max(max(values), max(ma_clean) if ma_clean else 0) or 1
+    max_v = _nice_axis_max(max(max(values), max(ma_clean) if ma_clean else 0) or 1)
     n = len(values)
     pad_l, pad_r, pad_t, pad_b = 42, 15, 15, 70
     cw = w - pad_l - pad_r
@@ -108,10 +132,10 @@ def vbar_svg(labels, values, ma=None, top_idx=None, w=700, h=240):
         y_top = pad_t + ch - bh - 6
         svg += f'  <text x="{x:.1f}" y="{y_top:.1f}" text-anchor="middle" font-size="10" font-weight="bold" fill="#FF7500">{values[idx]}</text>\n'
     # X-akse labels
-    step = max(1, n // 14)
+    step = _label_step(labels)
     for i in range(0, n, step):
         x = pad_l + i * (cw / n) + bw / 2
-        lbl = fmt_xlabel(labels[i], n) if i < len(labels) else ''
+        lbl = _x(fmt_xlabel(labels[i], n)) if i < len(labels) else ''
         svg += f'  <text x="{x:.1f}" y="{pad_t+ch+14}" text-anchor="end" font-size="10" fill="#64748b" transform="rotate(-38,{x:.1f},{pad_t+ch+14})">{lbl}</text>\n'
     svg += '</svg>'
     return svg
@@ -176,7 +200,7 @@ def waffle_svg(square_colors, cols=10, rows=10, cell=24, gap=4):
 
 
 def donut_svg(labels, values, size=260):
-    """Doughnut-diagram — til kanalfordeling.
+    """Doughnut-diagram til kanal- og sprogfordeling.
 
     Returnerer tuple (svg_str, legend_html).
     Brug dem side om side i HTML:
@@ -192,6 +216,15 @@ def donut_svg(labels, values, size=260):
     svg = f'<svg viewBox="0 0 {size} {size}" width="{size}" height="{size}" overflow="visible" xmlns="http://www.w3.org/2000/svg" style="display:block;font-family:sans-serif">\n'
     start = -math.pi / 2
     for i, (lbl, val) in enumerate(zip(labels, values)):
+        if val <= 0:
+            continue
+        col = PALETTE[i % len(PALETTE)]
+        if val >= total:
+            # Én kategori = hele ringen. En SVG-bue fra et punkt til samme punkt
+            # tegnes ikke, så den fulde ring tegnes som en cirkel med tyk streg.
+            svg += (f'  <circle cx="{cx}" cy="{cy}" r="{(r + ri) / 2}" fill="none" stroke="{col}" '
+                    f'stroke-width="{r - ri}"><title>{_x(lbl)}: {val}</title></circle>\n')
+            break
         angle = 2 * math.pi * val / total
         end = start + angle
         x1, y1 = cx + r * math.cos(start), cy + r * math.sin(start)
@@ -199,9 +232,8 @@ def donut_svg(labels, values, size=260):
         xi1, yi1 = cx + ri * math.cos(start), cy + ri * math.sin(start)
         xi2, yi2 = cx + ri * math.cos(end),   cy + ri * math.sin(end)
         large = 1 if angle > math.pi else 0
-        col = PALETTE[i % len(PALETTE)]
         d = f'M{x1:.1f},{y1:.1f} A{r},{r} 0 {large},1 {x2:.1f},{y2:.1f} L{xi2:.1f},{yi2:.1f} A{ri},{ri} 0 {large},0 {xi1:.1f},{yi1:.1f} Z'
-        lbl_esc = lbl.replace('&', '&amp;')
+        lbl_esc = _x(lbl)
         svg += f'  <path d="{d}" fill="{col}"><title>{lbl_esc}: {val}</title></path>\n'
         start = end
     svg += f'  <text x="{cx}" y="{cy-6}" text-anchor="middle" font-size="24" font-weight="bold" fill="#1e293b">{total}</text>\n'
@@ -211,7 +243,7 @@ def donut_svg(labels, values, size=260):
     for i, (lbl, val) in enumerate(zip(labels, values)):
         col = PALETTE[i % len(PALETTE)]
         pct = round(100 * val / total)
-        lbl_esc = lbl.replace('&', '&amp;')
+        lbl_esc = _x(lbl)
         legend += (f'<div style="display:flex;align-items:center;gap:8px">'
                    f'<span style="display:inline-block;width:11px;height:11px;background:{col};border-radius:2px;flex-shrink:0"></span>'
                    f'<span>{lbl_esc} <strong>{val}</strong> ({pct}%)</span></div>')

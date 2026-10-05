@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """
-render_html.py — Renderer den selvstændige HTML-medieanalyse fra
-metrics.json (compute_metrics.py) og topics.json (Claudes kvalitative
-mærkesags-analyse, se SKILL.md trin 2).
+render_html.py: Renderer den selvstændige HTML-medieanalyse fra
+metrics.json (compute_metrics.py) og topics_resolved.json (resolve_topics.py).
 
-Al layout, CSS og chart-generering er fast kode her — intet af det skal
-genopfindes eller genskrives af Claude fra analyse til analyse. Kun
-topics.json's INDHOLD varierer (det kræver læsning/dømmekraft), ikke
+Al layout, CSS og chart-generering er fast kode her. Intet af det skal
+genopfindes eller genskrives af agenten fra analyse til analyse. Kun
+indholdet af topics.json varierer (det kræver læsning og dømmekraft), ikke
 strukturen omkring det.
 
+Filen er helt selvstændig: ingen eksterne skrifttyper, scripts eller billeder,
+så den virker offline og sender ikke læserens IP-adresse til tredjepart.
+
 Brug:
-    python3 render_html.py <metrics.json> <substantive.json> <topics.json> \
+    python3 render_html.py <metrics.json> <topics_resolved.json> \
         --logo <overskrift-logo.svg> --out <output.html>
 """
 import argparse
@@ -21,13 +23,22 @@ import sys
 from string import Template
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from svg_helpers import hbar_svg, vbar_svg, donut_svg, waffle_svg, apportion_squares, PALETTE  # noqa: E402
-
-REST_GREY = '#d7d9dd'
+from svg_helpers import hbar_svg, vbar_svg, donut_svg, waffle_svg  # noqa: E402
 
 
 def esc(s):
-    return html.escape(s or '', quote=False)
+    """Escape til tekstindhold OG attributværdier (også anførselstegn)."""
+    return html.escape(str(s) if s is not None else '', quote=True)
+
+
+def safe_url(u):
+    """Kun http(s)-links; alt andet (fx javascript:) bliver til '#'."""
+    u = (u or '').strip()
+    return esc(u) if u.lower().startswith(('http://', 'https://')) else '#'
+
+
+def num_da(x, decimals=1):
+    return f'{x:.{decimals}f}'.replace('.', ',')
 
 
 PAGE_TEMPLATE = Template(r"""<!DOCTYPE html>
@@ -36,9 +47,10 @@ PAGE_TEMPLATE = Template(r"""<!DOCTYPE html>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Medieanalyse: $org_name</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;800&family=Source+Sans+3:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
 :root {
+  --font-head: Georgia, 'Times New Roman', serif;
+  --font-body: system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
   --bg: #FEFEFE;
   --header-color: #000000;
   --text: #404040;
@@ -58,7 +70,7 @@ body {
   margin: 0;
   background: var(--bluehint);
   color: var(--text);
-  font-family: 'Source Sans 3', sans-serif;
+  font-family: var(--font-body);
   line-height: 1.55;
 }
 header {
@@ -68,7 +80,7 @@ header {
   border-bottom: 5px solid var(--accent);
 }
 header h1 {
-  font-family: 'Playfair Display', serif;
+  font-family: var(--font-head);
   font-size: 2.3rem;
   margin: 0 0 6px;
 }
@@ -97,7 +109,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 32px 6vw 60px; }
   padding: 20px 16px;
   text-align: center;
 }
-.kpi-val { font-family: 'Playfair Display', serif; font-size: 2rem; font-weight: 800; color: var(--accent); }
+.kpi-val { font-family: var(--font-head); font-size: 2rem; font-weight: 800; color: var(--accent); }
 .kpi-lbl { font-size: 0.85rem; color: var(--muted); margin-top: 4px; }
 section {
   background: #fff;
@@ -106,7 +118,7 @@ section {
   padding: 28px 30px;
   margin-bottom: 28px;
 }
-section h2 { font-family: 'Playfair Display', serif; font-size: 1.4rem; margin: 0 0 6px; color: #1a1a1a; }
+section h2 { font-family: var(--font-head); font-size: 1.4rem; margin: 0 0 6px; color: #1a1a1a; }
 section .section-sub { color: var(--muted); font-size: 0.92rem; margin-bottom: 20px; }
 .flex-row { display: flex; gap: 28px; align-items: center; flex-wrap: wrap; }
 table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: 0.92rem; }
@@ -190,7 +202,7 @@ table a:hover { text-decoration: underline; }
 
   <section>
     <h2>Top 5 m&aelig;rkesager</h2>
-    <div class="section-sub">De temaer og diskussioner der fylder mest i omtalerne i perioden &mdash; hvert felt i gitteret er 1% af samtlige $total omtaler, ikke kun af summen af top 5.</div>
+    <div class="section-sub">De temaer og diskussioner der fylder mest i omtalerne i perioden. Hvert felt i gitteret er 1% af samtlige $total omtaler, ikke kun af summen af top 5. $topics_note</div>
     <div class="waffle-row">
       <div style="flex-shrink:0">
         $waffle_svg
@@ -212,7 +224,7 @@ table a:hover { text-decoration: underline; }
         $newest_html
       </div>
       <div class="mentions-col">
-        <h4>5 mest markante medier</h4>
+        <h4>Fra de største medier</h4>
         $notable_html
       </div>
     </div>
@@ -229,10 +241,10 @@ table a:hover { text-decoration: underline; }
 """)
 
 TIMELINE_SUB_BY_GRANULARITY = {
-    'hour': 'S&oslash;jler viser antal omtaler pr. time. Orange tal markerer de tre timer med flest omtaler.',
+    'hour': 'S&oslash;jler viser antal omtaler pr. time. Den bl&aring; linje er et glidende gennemsnit. Orange tal markerer de tre timer med flest omtaler.',
     'day': 'S&oslash;jler viser antal omtaler pr. dag. Den bl&aring; linje er et glidende gennemsnit. Orange tal markerer de tre dage med flest omtaler.',
     'week': 'S&oslash;jler viser antal omtaler pr. uge (mandag som ugestart). Den bl&aring; linje er et glidende gennemsnit. Orange tal markerer de tre uger med flest omtaler.',
-    'month': 'S&oslash;jler viser antal omtaler pr. m&aring;ned. Orange tal markerer de tre m&aring;neder med flest omtaler.',
+    'month': 'S&oslash;jler viser antal omtaler pr. m&aring;ned. Den bl&aring; linje er et glidende gennemsnit. Orange tal markerer de tre m&aring;neder med flest omtaler.',
 }
 
 
@@ -241,37 +253,39 @@ def mention_card(m):
     ellipsis = '&hellip;' if len(desc) >= 220 else ''
     return (
         '<div class="mention">'
-        f'<div class="mention-head"><a href="{esc(m["url"])}" target="_blank" rel="noopener">{esc(m["title"])}</a></div>'
+        f'<div class="mention-head"><a href="{safe_url(m["url"])}" target="_blank" rel="noopener">{esc(m["title"])}</a></div>'
         f'<div class="mention-meta">{esc(m["src"])} &middot; {esc(m["date_da"])}</div>'
         f'<div class="mention-desc">{esc(desc)}{ellipsis}</div>'
         '</div>'
     )
 
 
-def topic_row(t, color, pct, is_rest=False):
+def topic_row(t, estimated=False, is_rest=False):
     """Én række i mærkesags-legenden ved siden af waffle-diagrammet.
 
-    pct er andelen af det SAMLEDE antal omtaler (metrics['total']), ikke af
-    summen af top 5 — det er hele pointen med at vise et waffle-gitter frem
-    for fx et kagediagram, hvor kun top-5-summen typisk ville udgøre 100%.
+    t kommer fra topics_resolved.json. pct er andelen af det SAMLEDE antal
+    omtaler, ikke af summen af top 5.
     """
     ex_html = ''
     for e in t.get('examples', []):
         ex_html += (
             '<div class="ex-item">'
-            f'<a href="{esc(e["url"])}" target="_blank" rel="noopener">{esc(e["title"])}</a>'
-            f'<span class="ex-src">{esc(e["src"])}</span>'
+            f'<a href="{safe_url(e["url"])}" target="_blank" rel="noopener">{esc(e["title"])}</a>'
+            f'<span class="ex-src">{esc(e["src"])} &middot; {esc(e.get("date_da", ""))}</span>'
             '</div>\n'
         )
-    pct_str = f'{pct:.1f}'.replace('.', ',')
+    ca = 'ca. ' if estimated and not is_rest else ''
+    count_txt = f'{ca}{t["count"]} omtaler'
+    if t.get('count_touching', t['count']) > t['count']:
+        count_txt += f' (berører {t["count_touching"]})'
     cls = 'topic-row rest' if is_rest else 'topic-row'
     return f"""
     <div class="{cls}">
-      <span class="swatch" style="background:{color}"></span>
+      <span class="swatch" style="background:{esc(t['color'])}"></span>
       <div class="topic-row-body">
         <div class="topic-row-head">
           <h3>{esc(t['title'])}</h3>
-          <div class="topic-row-pct">{pct_str}%<small>{t['count']} omtaler</small></div>
+          <div class="topic-row-pct">{ca}{num_da(t['pct'])}%<small>{esc(count_txt)}</small></div>
         </div>
         <p>{esc(t['desc'])}</p>
         <div class="ex-list">{ex_html}</div>
@@ -282,23 +296,24 @@ def topic_row(t, color, pct, is_rest=False):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('metrics', help='Sti til metrics.json')
-    ap.add_argument('substantive', help='Sti til substantive.json (bruges til at slå example_idx op)')
-    ap.add_argument('topics', help='Sti til topics.json (Claudes kvalitative temaanalyse)')
+    ap.add_argument('topics', help='Sti til topics_resolved.json (fra resolve_topics.py)')
     ap.add_argument('--logo', required=True, help='Sti til overskrift-logo.svg')
     ap.add_argument('--out', required=True, help='Output HTML-fil')
     args = ap.parse_args()
 
-    metrics = json.load(open(args.metrics, encoding='utf-8'))
-    substantive = json.load(open(args.substantive, encoding='utf-8'))
-    topics_data = json.load(open(args.topics, encoding='utf-8'))
-    logo_svg = open(args.logo, encoding='utf-8').read()
-
-    sub_by_idx = {p['idx']: p for p in substantive}
+    with open(args.metrics, encoding='utf-8') as f:
+        metrics = json.load(f)
+    with open(args.topics, encoding='utf-8') as f:
+        topics_data = json.load(f)
+    with open(args.logo, encoding='utf-8') as f:
+        logo_svg = f.read()
+    if 'squares' not in (topics_data.get('rest') or {}):
+        sys.exit('FEJL: andet argument skal være topics_resolved.json fra resolve_topics.py, ikke topics.json.')
 
     # ---- KPIs ----
     kpis = [
         ('Samlede omtaler', str(metrics['total'])),
-        ('Gns. pr. dag', str(metrics['avg_per_day'])),
+        ('Gns. pr. dag', num_da(metrics['avg_per_day'])),
         ('Unikke kilder', str(metrics['unique_sources'])),
         ('Kanaler i spil', str(metrics['unique_channels'])),
         ('Analyseperiode', f"{metrics['n_days']} dage"),
@@ -320,43 +335,23 @@ def main():
     hbar = hbar_svg([s['label'] for s in metrics['top_sources']], [s['value'] for s in metrics['top_sources']])
     top_src_rows = ''
     for s in metrics['top_sources']:
-        link = f'<a href="{esc(s["url"])}" target="_blank" rel="noopener">{esc(s["label"])}</a>' if s['url'] else esc(s['label'])
+        link = (f'<a href="{safe_url(s["url"])}" target="_blank" rel="noopener">{esc(s["label"])}</a>'
+                if s['url'] else esc(s['label']))
         top_src_rows += f"<tr><td>{link}</td><td class='num'>{s['value']}</td></tr>\n"
 
     # ---- topics: waffle-diagram (andel af SAMLEDE omtaler) + legende ----
-    # topics.json skal indeholde præcis 5 temaer (SKILL.md trin 2). "Øvrige"
-    # er alt i metrics['total'] der ikke er dækket af de 5 temaer, og tælles
-    # altid med som en 6. — grå — kategori i gitteret, så de 100 felter altid
-    # summer til det fulde datasæt, ikke kun til top 5.
+    # Alle tal og felter er beregnet af resolve_topics.py, så HTML og PPTX er ens.
     topics_list = topics_data['topics']
-    counts = [t['count'] for t in topics_list]
-    rest_count = max(0, metrics['total'] - sum(counts))
-    all_counts = counts + [rest_count]
-    squares = apportion_squares(all_counts, n_squares=100)  # summer altid til nøjagtig 100 -> fast 10x10-gitter
-
-    colors = [PALETTE[i % len(PALETTE)] for i in range(len(topics_list))] + [REST_GREY]
+    rest = topics_data['rest']
+    estimated = topics_data.get('estimated', False)
     square_colors = []
-    for color, n_sq in zip(colors, squares):
-        square_colors.extend([color] * n_sq)
+    for t in topics_list + [rest]:
+        square_colors.extend([t['color']] * t['squares'])
     waffle = waffle_svg(square_colors, cols=10, rows=10)
 
-    topic_rows_html = ''
-    for i, t in enumerate(topics_list):
-        color = PALETTE[i % len(PALETTE)]
-        examples = []
-        for idx in t['example_idx']:
-            p = sub_by_idx.get(idx)
-            if p:
-                examples.append({'title': p['title'], 'src': p['src'], 'url': p['url']})
-        pct = 100 * t['count'] / metrics['total'] if metrics['total'] else 0
-        topic_rows_html += topic_row({**t, 'examples': examples}, color, pct)
-    if rest_count > 0:
-        rest_pct = 100 * rest_count / metrics['total'] if metrics['total'] else 0
-        topic_rows_html += topic_row(
-            {'title': 'Øvrige omtaler', 'desc': 'Alt andet i datasættet: enkeltstående nyheder, opslag uden for top 5, sociale medier m.m.',
-             'count': rest_count, 'example_idx': []},
-            REST_GREY, rest_pct, is_rest=True,
-        )
+    topic_rows_html = ''.join(topic_row(t, estimated) for t in topics_list)
+    if rest['count'] > 0:
+        topic_rows_html += topic_row(rest, estimated, is_rest=True)
 
     # ---- language section (optional) ----
     if metrics.get('language_distribution'):
@@ -375,7 +370,8 @@ def main():
 
     # ---- mentions ----
     newest_html = '\n'.join(mention_card(m) for m in metrics['newest5'])
-    notable_html = '\n'.join(mention_card(m) for m in metrics['notable5'])
+    notable_html = ('\n'.join(mention_card(m) for m in metrics['notable5']) or
+                    '<p class="mention-desc">Ingen omtaler fra de største landsdækkende medier i perioden.</p>')
 
     html_doc = PAGE_TEMPLATE.substitute(
         org_name=esc(metrics['org_name']),
@@ -391,6 +387,7 @@ def main():
         top_src_rows=top_src_rows,
         waffle_svg=waffle,
         topic_rows=topic_rows_html,
+        topics_note=esc(topics_data.get('note', '')),
         language_section=language_section,
         newest_html=newest_html,
         notable_html=notable_html,

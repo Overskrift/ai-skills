@@ -1,140 +1,128 @@
 ---
 name: medieomtale-analyse
-description: >
-  Brug denne skill når brugeren vil have en analyse af medieomtaler fra Overskrift.dk.
-  Trigger når brugeren uploader eller refererer til en JSON-fil med medieomtaler, mediedata
-  eller mediemonitorering — også selvom de bare siger "analysér dette", "lav en rapport" eller
-  "hvad siger medierne om X". Filen indeholder typisk felterne `_meta` og `posts`.
-  Outputtet er altid en selvstændig, interaktiv HTML-fil med visuelle grafer og tabeller,
-  SAMT en PowerPoint-præsentation (.pptx) med de samme nøgletal.
-  Brug også denne skill hvis brugeren blot nævner "Overskrift.dk", "medieomtaler",
-  "presseomtale", "mediedækning" eller "medieovervågning".
+description: "Brug denne skill når brugeren vil have en analyse eller rapport over medieomtaler fra Overskrift.dk, enten fra en JSON-eksport (felterne `_meta` og `posts`) eller hentet via Overskrifts MCP-værktøjer (list_search_terms, get_media_hits). Trigger når brugeren uploader eller henviser til sådan en fil, eller beder om at analysere medieomtale, presseomtale eller mediedækning af en organisation eller et emne i en periode, fx \"analysér dette\", \"lav en rapport\", \"medieanalyse for uge 40\" eller \"hvad siger medierne om X\". Outputtet er altid en selvstændig HTML-rapport SAMT en PowerPoint-præsentation (.pptx) med de samme nøgletal. Brug den IKKE til eftersyn af søgeprofiler eller til blogindlæg om Overskrift."
 ---
 
-# Medieomtale-analyse (Overskrift.dk JSON)
+# Medieomtale-analyse (Overskrift.dk)
 
 Du skal producere en professionel, visuelt rig medieomtaleanalyse som **to filer**:
-1. En selvstændig HTML-fil med interaktive grafer
+1. En selvstændig HTML-rapport (ingen eksterne skrifttyper, scripts eller billeder)
 2. En PowerPoint-præsentation (.pptx) med de samme nøgletal
 
-## Sådan virker skillen: 3 trin, hvoraf kun ét kræver din dømmekraft
+Skillen er skrevet til enhver agent der kan køre Python 3.9+ og Node 18+.
 
-Al beregning og al layout/rendering er **færdigskrevet, testet kode i `scripts/`**.
-Kør den — genskriv den ikke. Det eneste trin der reelt kræver at du læser og
-vurderer indhold, er trin 2 (Top 5 mærkesager). Trin 1 og 3 er ren scriptkørsel.
+## Stier (gælder alle kommandoer nedenfor)
 
-```
-Trin 1 (script)     Trin 2 (dig)                Trin 3 (script)
-─────────────       ──────────────────          ──────────────────
-compute_metrics.py  Læs substantive.json         render_html.py
-  → metrics.json     Skriv topics.json           render_pptx.js
-  → substantive.json (kvalitativ tema-analyse)     → .html + .pptx
-```
-
-Hvis du bemærker dig selv i gang med at skrive en Python-funktion der tæller
-`groupkey`-værdier, bygger et SVG-søjlediagram fra bunden, eller sætter en
-lang HTML/CSS-streng sammen med f-strings — stop. Det er allerede løst i
-`scripts/`. Brug scriptet i stedet, eller sig til hvis det rent faktisk
-mangler noget, så det kan rettes i scriptet fremover i stedet for at blive
-løst ad hoc igen.
-
----
-
-## JSON-formatets struktur
-
-Filen fra Overskrift.dk har altid to hoveddele:
-
-### `_meta` — metadata om eksporten
-
-| Felt | Beskrivelse |
-|------|-------------|
-| `_meta.source` | Altid "Overskrift.dk" |
-| `_meta.query.searchterm` | Den anvendte søgestreng (wildcards, quotes, boolske operatorer) |
-| `_meta.period.from` / `.to` | Perioden som Unix timestamps |
-| `_meta.period.label` | Menneskelig periodelabel, fx "30 dage" |
-| `_meta.counts.total` | Samlet antal omtaler i eksporten |
-
-### `posts[]` — de enkelte omtaler
-
-| Felt | Beskrivelse |
-|------|-------------|
-| `item_url` | URL til det originale opslag |
-| `item_title` | Titel på artikel/opslag |
-| `item_desc` | Brødtekst eller uddrag (~500 tegn, kan indeholde HTML-entiteter) |
-| `item_date` | Unix timestamp (sekunder) for publicering |
-| `pubdate` | Publiceringstidspunkt som lokal datostreng (YYYY-MM-DD HH:MM:SS) |
-| `groupkey` | Kanaltype: `websites`, `facebook`, `linkedin`, `twitter`, `bluesky`, `instagram`, `reddit`, `podcast`, `blogs`, `youtube`, `trustpilot` m.fl. |
-| `title` | Kildenavn, fx "Politiken.dk", "Berlingske" eller "Facebooksiden X" |
-| `siteurl` | URL til kildens forside |
-| `searchterm` | Den søgeterm der matchede dette opslag |
-
-Samme artikel kan optræde flere gange hvis den matcher flere søgetermer — derfor
-deduplikerer `compute_metrics.py` altid på `item_url` som første skridt.
-
----
-
-## Trin 1: Beregn metrikker (`scripts/compute_metrics.py`)
-
-Ingen ekstra Python-pakker kræves — kun standardbiblioteket.
+- `SKILL_DIR`: mappen hvor denne SKILL.md ligger. Den kan være skrivebeskyttet
+  og deles med andre. **Skriv aldrig filer dertil.**
+- `WORK`: en arbejdsmappe du selv opretter til analysen, fx `./medieanalyse-<navn>`.
+  Alle input-, mellem- og outputfiler ligger her, og alle kommandoer køres herfra.
 
 ```bash
-python3 scripts/compute_metrics.py <input.json> --outdir <arbejdsmappe> --org-name "Danmarks Naturfredningsforening"
+SKILL_DIR=/sti/til/medieomtale-analyse   # tilpas
+WORK=./medieanalyse-musik-i-lejet         # tilpas
+mkdir -p "$WORK" && cd "$WORK"
+npm install --no-save pptxgenjs@^4        # én gang pr. arbejdsmappe (kun til PPTX)
 ```
 
-`--org-name` er visningsnavnet i rapportens titel/header. Udled det fra den
-første citerede term i søgestrengen, eller spørg brugeren hvis det er
-tvetydigt (fx flere lige centrale navne i søgetermen). Uden `--org-name`
-gætter scriptet selv ud fra `_meta.query.searchterm`.
+Python-scripts bruger kun standardbiblioteket. `render_pptx.js` finder
+`pptxgenjs` i arbejdsmappens `node_modules` (eller via `NODE_PATH`).
 
-Scriptet gør **alt** det mekaniske arbejde og skriver to filer:
+## Overblik: 5 trin, hvoraf kun ét kræver din dømmekraft
 
-**`metrics.json`** — alle kvantitative nøgletal, klar til rendering:
-`org_name`, `searchterm_display`, `period_label_da`, `n_days`, `total`,
-`avg_per_day`, `unique_sources`, `unique_channels`, `timeline` (labels,
-values, glidende gennemsnit, top 3-indeks — granularitet vælges automatisk
-efter periodens længde: time/dag/uge/måned), `channels` (dansk-oversatte
-labels), `top_sources` (med `siteurl`), `language_share` +
-`language_distribution` (kun udfyldt hvis >30% har sprog-data),
-`newest5`, `notable5` (kendte medier — se `--known-media` nedenfor),
-`generated_date_da`.
+Al beregning og al layout/rendering er **færdigskrevet, testet kode i
+`$SKILL_DIR/scripts/`**. Kør den, genskriv den ikke. Det eneste trin der kræver at
+du læser og vurderer indhold, er trin 2 (Top 5 mærkesager).
 
-**`substantive.json`** — de omtaler der er "substantielle nok" til at indgå i
-tema-analysen (fotoposts og indholdsløse Instagram/Facebook-opslag er
-frasorteret). Hvert element har et `idx`, samt `title`, `desc`, `src`,
-`groupkey`, `date_da`, `url`. **Det er denne fil du læser i trin 2** — ikke
-den rå input-JSON, som ofte er for stor til at læse i sin helhed på én gang.
+```
+Trin 0          Trin 1              Trin 2 (dig)      Trin 3             Trin 4
+Hent data  ->   compute_metrics ->  topics.json  ->   resolve_topics ->  render_html + render_pptx
+input.json      metrics.json                          topics_resolved
+                substantive.json
+```
 
-Valgfrit: `--known-media <sti.json>` peger på en JSON-liste af medienavne der
-definerer "mest markante" i `notable5` (default er en indbygget liste over
-store danske medier — udvid kun hvis en tydeligvis kendt kilde mangler).
+Hvis du er i gang med at skrive en funktion der tæller `groupkey`-værdier,
+bygger et SVG-diagram fra bunden eller sætter HTML sammen med f-strings: stop.
+Det er løst i `scripts/`. Mangler scriptet noget, så ret det dér.
 
-Alle datoer i output er allerede formateret dansk (`DD/MM-YYYY`) — konvertér
-ikke selv.
+## Reference-filer (læs kun når du har brug for dem)
+
+- `references/data-format.md`: felterne i input-JSON, `metrics.json`,
+  `substantive.json`, `topics.json` og `topics_resolved.json`.
+- `references/rendering.md`: rapportens sektioner og slides, waffle-diagrammet,
+  oversigt over scripts, og hvordan du retter i skillen.
 
 ---
+
+## Trin 0: Hent data til `$WORK/input.json`
+
+**Har brugeren uploadet en eksportfil**, så kopiér den til `input.json`.
+
+**Ellers via Overskrifts MCP-server:**
+
+1. Kald `list_search_terms` og find søgeprofilens `id` ud fra brugerens emne.
+   Er flere profiler mulige, så spørg.
+2. Omregn perioden til datoer i Europe/Copenhagen. "Uge 40 2026" er ISO-uge 40:
+   mandag 28/09 til søndag 04/10-2026. Kald `get_media_hits` med `term`,
+   `date_from` og `date_to` (YYYY-MM-DD, begge inklusive).
+3. **Brug `_meta.download_url`, hvis du kan hente filer** (kodekørsel/netværk):
+   ```bash
+   curl -sSf -o input.json "<download_url>"
+   ```
+   Den indeholder hele resultatet med fulde tekster og er kun gyldig i ca. 15
+   minutter, så hent den med det samme. Læs den ikke ind i samtalen.
+4. Kun hvis du ikke kan hente filer: kald `get_media_hits` igen med
+   `offset=_meta.paging.next_offset`, indtil `has_more` er `false`. Saml alle
+   `posts` i én fil med `_meta` fra første svar. Bemærk at `item_desc` her er
+   forkortet til 200 tegn, så tema-analysen får et tyndere grundlag. Nævn det
+   for brugeren.
+
+Brug aldrig `_meta.period.label` til noget. Den kan afvige fra perioden;
+scriptet bruger `period.from`/`to`.
+
+## Trin 1: Beregn metrikker
+
+```bash
+python3 "$SKILL_DIR/scripts/compute_metrics.py" input.json --outdir . --org-name "Musik i Lejet"
+```
+
+`--org-name` er visningsnavnet i rapportens titel. Udled det fra søgeprofilens
+navn eller den første citerede term i søgestrengen, eller spørg hvis det er
+tvetydigt.
+
+Scriptet deduplikerer på URL (uden tracking-parametre), samler LinkedIn som én
+kilde, fortolker alle tidspunkter i Europe/Copenhagen uanset maskinens
+tidszone, og skriver:
+
+- **`metrics.json`**: alle kvantitative nøgletal, klar til rendering.
+- **`substantive.json`**: omtaler med tekst nok til tema-analysen. Hvert element
+  har `idx`, `title`, `desc`, `src`, `groupkey`, `date_da`, `url`.
+  **Det er denne fil du læser i trin 2**, ikke den rå input-JSON.
+
+Valgfrit: `--known-media <liste.json>` udskifter listen over store medier der
+bruges til "Fra de største medier". Navne matches på hele ord.
+
+Læs advarsler i scriptets output (fx nye kanaltyper uden dansk navn).
 
 ## Trin 2: Identificér Top 5 mærkesager (det eneste kvalitative trin)
 
-Dette er **kvalitativ, semantisk analyse — ikke ordtælling**, og er grunden
-til at et menneske (eller en LLM) skal involveres frem for endnu et script.
+Dette er **kvalitativ, semantisk analyse, ikke ordtælling**. Læs
+`substantive.json` og find de (op til) 5 mest fremtrædende **temaer,
+mærkesager eller holdninger**.
 
-Læs `substantive.json` og identificér de 5 mest fremtrædende **temaer,
-mærkesager eller holdninger** der går igen i `title`+`desc`.
-
-Et tema er IKKE et enkelt ord — det er en beskrivelse af en holdning, et
-samfundsproblem, en kampagne eller en diskussion. Eksempler:
+Et tema er IKKE et enkelt ord, men en holdning, et samfundsproblem, en
+kampagne eller en diskussion. Fx:
 - "Kamp for kortere ventetid til gigtspecialist"
 - "Politisk angreb: organisationen kan miste en lovfæstet særret"
-- "Historisk millionunderskud vælter ind over landets medier"
 
 For hvert tema:
-- Giv det et kortfattet navn (3-6 ord)
-- Skriv en sætning der forklarer hvad diskussionen handler om
-- Find 2 repræsentative posts som eksempler — brug deres `idx` fra `substantive.json`
-- Angiv et skøn over hvor mange substantielle posts der berører temaet
-
-Skriv resultatet til `topics.json` i **præcis** dette format (bruges direkte
-af render-scripts i trin 3):
+- `title`: kortfattet navn (3-6 ord)
+- `desc`: én sætning om hvad diskussionen handler om
+- `post_idx`: **alle** `idx` fra `substantive.json` der handler om temaet. Det
+  er grundlaget for tallene i rapporten, så vær grundig. En omtale må gerne stå
+  under flere temaer; den tælles kun under det første.
+- `example_idx`: 2 repræsentative omtaler, helst fra `post_idx`, og helst nogen
+  med en sigende titel (ikke "Instagram tag #...")
 
 ```json
 {
@@ -142,105 +130,69 @@ af render-scripts i trin 3):
     {
       "title": "Kamp for kortere ventetid til gigtspecialist",
       "desc": "Gigtforeningen presser politikerne for maks. 30 dages ventetid og en national gigtplan.",
-      "count": 38,
+      "post_idx": [3, 12, 17, 47, 51],
       "example_idx": [12, 47]
     }
   ]
 }
 ```
 
-Præcis 5 temaer, i faldende prioritet (vigtigste først — det bestemmer
-rækkefølgen og farven i output). `count` skal være dit skøn over antal
-substantielle posts der berører temaet — render-scripts beregner selv hver
-mærkesags andel af `metrics.json`'s `total` (dvs. af **samtlige** omtaler i
-perioden, ikke kun af summen af de 5 temaer).
+Rækkefølgen er prioritet (vigtigste først); den bestemmer farve og hvilket tema
+en delt omtale tælles under. Omtaler der ikke passer ind i noget tema (fx
+falske hits fra søgeprofilen), lader du være; de havner i "Øvrige omtaler".
+Ved et lille datasæt er færre end 5 temaer i orden.
 
-### Sådan vises Top 5 mærkesager: waffle-diagram
+**Kun for meget store datasæt**, hvor du ikke realistisk kan klassificere hver
+omtale: angiv `"count": <skøn>` i stedet for `post_idx` på alle temaer. Tallene
+vises så som "ca." i rapporten, og summen af skøn må ikke overstige det samlede
+antal omtaler. Sig til brugeren at tallene er skøn.
 
-Top 5-sektionen i både HTML og PPTX er et **waffle-/piktogram-diagram**: et
-fast gitter på 100 felter (altid 10×10, aldrig mere eller færre rækker), hvor
-hvert felt svarer til 1% af `metrics.json`'s `total`. De 5 temaer får hver
-deres farve fra `PALETTE`, og alt der ikke er dækket af de 5 temaer samles i
-en 6. — grå — kategori, "Øvrige omtaler", så gitteret altid summer til hele
-datasættet i stedet for kun til top-5-summen.
+Gem som `topics.json`.
 
-Denne form er bevidst valgt frem for et kagediagram: når top 5 kun dækker en
-mindre del af det samlede antal omtaler (helt normalt — ofte 15-25%), bliver
-en "øvrige"-skive i en donut meget stor, og de fem reelle temaer bliver til
-tynde, svært sammenlignelige kileudsnit i periferien. I et waffle-gitter kan
-man i stedet tælle og sammenligne felter direkte.
-
-**Rund aldrig selv hver mærkesags andel til nærmeste hele felt** — det kan
-sagtens summe til fx 87 eller 103 felter og ødelægge det faste 10×10-gitter.
-Brug altid `apportion_squares()` (Python, i `svg_helpers.py`) eller
-`apportionSquares()` (JS, i `render_pptx.js`), som bruger "largest
-remainder"-metoden til at garantere at fordelingen summer til **nøjagtig**
-100 felter, uanset hvordan de enkelte procentandele runder af. Begge scripts
-kalder allerede denne funktion — det er kun relevant at kende til, hvis du
-selv skal rette i render-koden.
-
----
-
-## Trin 3: Render output-filerne (`scripts/render_html.py` + `scripts/render_pptx.js`)
+## Trin 3: Valider og beregn mærkesagerne
 
 ```bash
-python3 scripts/render_html.py metrics.json substantive.json topics.json \
-  --logo assets/overskrift-logo.svg --out <navn>-medieanalyse-<måned><år>.html
-
-node scripts/render_pptx.js metrics.json topics.json \
-  --logo assets/overskrift-logo.png --out <navn>-medieanalyse-<måned><år>.pptx
+python3 "$SKILL_DIR/scripts/resolve_topics.py" metrics.json substantive.json topics.json --out topics_resolved.json
 ```
 
-`render_pptx.js` kræver `pptxgenjs` (`npm install pptxgenjs` — kør én gang pr.
-session/miljø hvis `node_modules` ikke allerede findes). Intet andet
-run-time-afhængighed: logoet ligger allerede som PNG i `assets/`, så der er
-**ikke** brug for `cairosvg`-konvertering længere.
+Scriptet validerer `topics.json` (stopper med en fejlbesked hvis noget er
+galt; ret filen og kør igen), tæller hver omtale under ét tema, og beregner
+procenter og felter til waffle-diagrammet. Begge render-scripts bruger dette
+resultat, så HTML og PPTX viser de samme tal.
 
-Begge scripts bygger den fulde struktur automatisk:
-`Header → KPI-kort → Tidslinje → Kanalfordeling → Top 10 kilder →
-Top 5 mærkesager → (Sprogfordeling, hvis relevant) → Udvalgte omtaler → Footer`
-og PPTX'ens 7 faste slides (titel, KPI, tidslinje, kanalfordeling, top 10
-kilder, mærkesager, udvalgte omtaler — **ingen separat afslutningsslide**,
-Overskrift-logoet sidder i stedet i nederste højre hjørne af den sidste
-slide).
+## Trin 4: Render output-filerne
 
-Hvis rapporten skal se anderledes ud — andet layout, andre farver, ekstra
-sektion — så ret i `render_html.py`/`render_pptx.js`/`svg_helpers.py` og lad
-ændringen blive i skillen, i stedet for at bygge den om ved siden af hver
-gang. Det er hele pointen med at have scriptene.
+```bash
+python3 "$SKILL_DIR/scripts/render_html.py" metrics.json topics_resolved.json \
+  --logo "$SKILL_DIR/assets/overskrift-logo.svg" --out <navn>-medieanalyse-<periode>.html
 
----
+node "$SKILL_DIR/scripts/render_pptx.js" metrics.json topics_resolved.json \
+  --logo "$SKILL_DIR/assets/overskrift-logo.png" --out <navn>-medieanalyse-<periode>.pptx
+```
 
-## Eksempel på filnavngivning
+Begge scripts bygger hele strukturen automatisk. Skal rapporten se anderledes
+ud, så ret i scriptene (i skillens kilde) i stedet for at bygge den om ad hoc.
 
-| Søgeterm | HTML-filnavn | PPTX-filnavn |
-|----------|-------------|--------------|
-| `Gigtforening*` | `gigtforeningen-medieanalyse-maj2026.html` | `gigtforeningen-medieanalyse-maj2026.pptx` |
-| `"Musik i Lejet"` | `musik-i-lejet-medieanalyse-maj2026.html` | `musik-i-lejet-medieanalyse-maj2026.pptx` |
+### Filnavngivning
+
+| Søgeterm | Periode | Filnavn (uden endelse) |
+|----------|---------|------------------------|
+| `Gigtforening*` | maj 2026 | `gigtforeningen-medieanalyse-maj2026` |
+| `"Musik i Lejet"` | uge 40 2026 | `musik-i-lejet-medieanalyse-uge40-2026` |
+
+### Tjek før du afleverer
+
+- Kør begge render-scripts uden fejl, og åbn/se HTML-filen.
+- Antallet af dage i KPI'en svarer til den bestilte periode.
+- Fortæl brugeren om advarsler fra scripts (fx skøn i stedet for optælling,
+  forkortede tekster fra paging eller falske hits i søgeprofilen).
 
 ---
 
 ## Tone og sprog
 
-- Skriv al tekst i outputfilerne på **dansk** (temaernes `title`/`desc` i `topics.json` inklusive)
-- Professionel men tilgængelig tone — rapporten skal kunne læses af en kommunikationschef
-  der ikke er datafaglig
-- Undgå jargon — forklar hvad tallene betyder i praksis
-
----
-
-## Reference: hvad ligger i `scripts/` og `assets/`
-
-- `scripts/compute_metrics.py` — trin 1, se ovenfor. Ingen eksterne afhængigheder.
-- `scripts/render_html.py` — trin 3 (HTML). Importerer `svg_helpers.py`. Ingen eksterne afhængigheder.
-- `scripts/render_pptx.js` — trin 3 (PPTX). Kræver `pptxgenjs` (npm).
-- `scripts/svg_helpers.py` — SVG-chart-primitiver (`hbar_svg`, `vbar_svg`, `donut_svg`, `fmt_num`,
-  `fmt_xlabel`, `PALETTE`) brugt internt af `render_html.py`. Skal normalt ikke kaldes direkte.
-- `assets/overskrift-logo.svg` — logo til HTML-footeren.
-- `assets/overskrift-logo.png` — samme logo, prærenderet til PPTX (undgår cairosvg-afhængighed).
-
-Hvis et fremtidigt datasæt afslører et nyt behov (nyt kanal-navn der mangler
-dansk oversættelse, en periodelængde der rammer en grænsesag i
-granularitets-logikken, etc.), så ret det i `compute_metrics.py` frem for at
-patche det ad hoc i den enkelte analyse — så virker rettelsen automatisk
-næste gang også.
+- Al tekst i outputfilerne er på **dansk**, inklusive `title`/`desc` i `topics.json`.
+- Professionel men tilgængelig tone: rapporten skal kunne læses af en
+  kommunikationschef der ikke er datafaglig.
+- Undgå jargon, og forklar hvad tallene betyder i praksis.
+- Brug ikke tankestreger (—) i teksterne; brug komma, kolon eller punktum.
