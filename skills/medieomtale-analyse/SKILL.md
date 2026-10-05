@@ -11,6 +11,19 @@ Du skal producere en professionel, visuelt rig medieomtaleanalyse som **to filer
 
 Skillen er skrevet til enhver agent der kan køre Python 3.9+ og Node 18+.
 
+## Modelkrav (læs før du går i gang)
+
+Tema-analysen i trin 2 kræver en model, der pålideligt kan læse og klassificere
+hundredvis af danske omtaler. Test viser, at Claude Haiku giver misvisende
+temaer og optællinger, og dens kontekstvindue rækker ikke til store datasæt.
+
+- Kører du som Claude Haiku: stop før trin 0. Fortæl brugeren, at analysen vil
+  være misvisende på denne model, og anbefal at skifte til Claude Sonnet
+  (eller Claude Opus til store datasæt og kundeleverancer). Fortsæt kun, hvis
+  brugeren udtrykkeligt beder om det, og skriv så tydeligt i svaret, at
+  analysen er lavet med Haiku og bør kontrolleres.
+- I Claude anbefales Claude Sonnet 5.5 eller nyere.
+
 ## Stier (gælder alle kommandoer nedenfor)
 
 - `SKILL_DIR`: mappen hvor denne SKILL.md ligger. Den kan være skrivebeskyttet
